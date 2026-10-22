@@ -19,6 +19,8 @@ This repository is a fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.co
   - **Right-click** the `あ` button to cycle between `JP + Romaji`, `Romaji Only`, and `Furigana`.
 - **Smart Language Detection & Caching:** Automatically detects Japanese tracks (leaving English/other languages untouched and avoiding duplicate lines on English chorus lines in J-Pop tracks) and caches converted tracks in memory for instant switching.
 
+![Japanese Romanization Preview](preview.gif)
+
 ![Preview](preview.png)
 
 ## New in v2.1.1
