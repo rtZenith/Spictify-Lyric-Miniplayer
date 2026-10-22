@@ -1,9 +1,23 @@
-# Lyric Miniplayer
+# Lyric Miniplayer (Japanese Romanization Fork)
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/RCsyek5HY)
-[![GitHub stars](https://img.shields.io/github/stars/FO-SS/Spictify-Lyric-Miniplayer?style=for-the-badge&logo=github&color=1DB954)](https://github.com/FO-SS/Spictify-Lyric-Miniplayer/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/rtZenith/Spictify-Lyric-Miniplayer?style=for-the-badge&logo=github&color=1DB954)](https://github.com/rtZenith/Spictify-Lyric-Miniplayer/stargazers)
+[![Upstream](https://img.shields.io/badge/Upstream-FO--SS%2FSpictify--Lyric--Miniplayer-5865F2?style=for-the-badge&logo=github)](https://github.com/FO-SS/Spictify-Lyric-Miniplayer)
 
 A Spicetify extension that creates a **floating Picture-in-Picture lyrics window** that stays on top of other applications — like YouTube's mini-player, but for lyrics!
+
+## 🌸 About This Fork (`rtZenith`)
+
+This repository is a fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.com/FO-SS/Spictify-Lyric-Miniplayer) maintained by [@rtZenith](https://github.com/rtZenith) that adds **automatic Japanese Romanization (Romaji & Furigana)** support directly into the floating miniplayer:
+
+- **Full Kanji, Hiragana & Katakana Romanization:** Powered by **Kuroshiro + Kuromoji** morphological analysis with a built-in instant Hepburn Kana fallback.
+- **3 Romanization Display Styles:**
+  - **JP + Romaji (`Below` — default):** Displays the original Japanese line with its Romaji pronunciation underneath.
+  - **Romaji Only (`Replace`):** Replaces Japanese lines completely with Romaji.
+  - **Furigana (`Ruby`):** Displays Kanji with Hiragana readings above them.
+- **One-Click `あ` Quick Toggle:**
+  - **Left-click** the `あ` button in the miniplayer header (or hover bar in Lyrics Only Mode) to toggle Japanese Romanization on/off.
+  - **Right-click** the `あ` button to cycle between `JP + Romaji`, `Romaji Only`, and `Furigana`.
+- **Smart Language Detection & Caching:** Automatically detects Japanese tracks (leaving English/other languages untouched and avoiding duplicate lines on English chorus lines in J-Pop tracks) and caches converted tracks in memory for instant switching.
 
 ![Preview](preview.png)
 
@@ -34,6 +48,7 @@ A Spicetify extension that creates a **floating Picture-in-Picture lyrics window
 
 ## Features
 
+- **Japanese Romanization (Romaji & Furigana)** — Automatically converts Japanese lyrics (Kanji, Hiragana, Katakana) into Romaji or Furigana with 3 display modes (`JP + Romaji`, `Romaji Only`, `Furigana`) and a quick `あ` toggle button
 - **Floating Window** — Opens lyrics in a separate always-on-top window
 - **Keyboard Shortcut** — Open/close the miniplayer with **Ctrl + M**, or set your own combo
 - **Synced Lyrics** — Automatically highlights and scrolls to the current line
@@ -142,6 +157,8 @@ Click the **⠿** in the header (or the **gear** button on the hover bar in Lyri
 |--------|-------------|
 | **Lyrics Only Mode** | Hide everything except the lyrics |
 | **Center Lyrics** | Toggle centered or left-aligned lyrics |
+| **Romanize Japanese** | Convert Japanese lyrics to Romaji (or toggle with the `あ` button in the header) |
+| **Romanize Style** | Cycle between **JP + Romaji** (below original), **Romaji Only** (replace), and **Furigana** (or right-click the `あ` button) |
 
 ### Control Options
 | Toggle | Description |

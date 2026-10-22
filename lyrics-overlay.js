@@ -180,7 +180,16 @@
     let centerLyrics = true;
     let lyricsOnly = false;
     let autoHideControls = true;
+    let romanizeJapanese = true;
+    let romanizeMode = 'below'; // 'below' | 'replace' | 'furigana'
     let currentTheme = 'dynamic';
+
+    const ROMANIZE_MODES = {
+        below: 'JP + Romaji',
+        replace: 'Romaji Only',
+        furigana: 'Furigana',
+    };
+    const ROMANIZE_MODE_KEYS = Object.keys(ROMANIZE_MODES);
 
     // Per-window runtime state (reset each time the PiP window opens)
     let manualScroll = false;
@@ -214,6 +223,10 @@
         if (savedLyricsOnly !== null) lyricsOnly = savedLyricsOnly === 'true';
         const savedAutoHide = localStorage.getItem('lyrics-overlay-autohide');
         if (savedAutoHide !== null) autoHideControls = savedAutoHide === 'true';
+        const savedRomanize = localStorage.getItem('lyrics-overlay-romanize');
+        if (savedRomanize !== null) romanizeJapanese = savedRomanize === 'true';
+        const savedRomanizeMode = localStorage.getItem('lyrics-overlay-romanize-mode');
+        if (savedRomanizeMode && ROMANIZE_MODES[savedRomanizeMode]) romanizeMode = savedRomanizeMode;
         const savedTheme = localStorage.getItem('lyrics-overlay-theme');
         if (savedTheme && THEMES[savedTheme]) currentTheme = savedTheme;
     } catch (e) {}
@@ -396,6 +409,38 @@
             height: 2px;
             background: #fff;
             border-radius: 50%;
+        }
+
+        .romaji-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: rgba(255, 255, 255, 0.45);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 3px 6px;
+            border-radius: 6px;
+            transition: all 0.15s;
+            line-height: 1.1;
+            margin-right: 2px;
+            font-family: inherit;
+        }
+
+        .romaji-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        .romaji-btn.active,
+        .float-btn.romaji-on {
+            color: #000;
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .romaji-btn.active:hover,
+        .float-btn.romaji-on:hover {
+            background: var(--accent-hover);
         }
 
         .close-btn {
@@ -704,6 +749,21 @@
 
         .menu-toggle.on::after {
             transform: translateX(20px);
+        }
+
+        .menu-badge {
+            font-size: 11px;
+            font-weight: 600;
+            color: #000;
+            background: var(--accent);
+            padding: 4px 10px;
+            border-radius: 12px;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+
+        .menu-item:hover .menu-badge {
+            background: var(--accent-hover);
         }
 
         .menu-divider {
@@ -1016,6 +1076,29 @@
             opacity: 0.4;
         }
 
+        .lyric-orig {
+            line-height: 1.35;
+        }
+
+        .lyric-romaji {
+            font-size: 0.8em;
+            opacity: 0.82;
+            margin-top: 2px;
+            font-weight: 400;
+            line-height: 1.25;
+            letter-spacing: 0.01em;
+        }
+
+        .lyric ruby {
+            ruby-align: center;
+        }
+
+        .lyric rt {
+            font-size: 0.62em;
+            opacity: 0.88;
+            font-weight: 400;
+        }
+
         /* Resume sync pill */
         .resume-pill {
             position: absolute;
@@ -1260,6 +1343,266 @@
         } catch (e) {}
 
         return null;
+    }
+
+    // ==================== JAPANESE ROMANIZATION ====================
+    const KUROSHIRO_URL = 'https://cdn.jsdelivr.net/npm/kuroshiro@1.2.0/dist/kuroshiro.min.js';
+    const KUROMOJI_URL = 'https://cdn.jsdelivr.net/npm/kuroshiro-analyzer-kuromoji@1.1.0/dist/kuroshiro-analyzer-kuromoji.min.js';
+    const KUROMOJI_DICT_PATH = 'https:/cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict';
+
+    const KANA_REGEX = /[\u3040-\u309f\u30a0-\u30ff\uff66-\uff9f\u31f0-\u31ff]/;
+    const JP_CHAR_REGEX = /[\u3005\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/;
+
+    let kuroshiroInstance = null;
+    let kuroshiroInitPromise = null;
+    const romanizedCache = new Map();
+
+    // Fix kuromoji's browserify path.join turning "https://" into "https:/"
+    function applyKuromojiFix() {
+        if (typeof XMLHttpRequest.prototype.realOpen === 'undefined') {
+            XMLHttpRequest.prototype.realOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function (method, url, bool) {
+                if (typeof url === 'string' && url.indexOf(KUROMOJI_DICT_PATH.replace('https://', 'https:/')) === 0) {
+                    this.realOpen(method, url.replace('https:/', 'https://'), bool);
+                } else {
+                    this.realOpen(method, url, bool);
+                }
+            };
+        }
+    }
+
+    function loadExternalScript(url) {
+        return new Promise((resolve, reject) => {
+            const existing = document.querySelector(`script[src="${url}"]`);
+            if (existing) {
+                if (existing.dataset.loaded === 'true') return resolve();
+                existing.addEventListener('load', () => resolve(), { once: true });
+                existing.addEventListener('error', reject, { once: true });
+                // Also resolve if global already exists (e.g. injected by lyrics-plus)
+                setTimeout(resolve, 300);
+                return;
+            }
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = url;
+            script.onload = () => {
+                script.dataset.loaded = 'true';
+                resolve();
+            };
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    }
+
+    async function ensureKuroshiro() {
+        if (kuroshiroInstance) return kuroshiroInstance;
+        if (kuroshiroInitPromise) return kuroshiroInitPromise;
+
+        kuroshiroInitPromise = (async () => {
+            try {
+                applyKuromojiFix();
+                await Promise.all([
+                    loadExternalScript(KUROMOJI_URL),
+                    loadExternalScript(KUROSHIRO_URL),
+                ]);
+
+                for (let i = 0; i < 50; i++) {
+                    if (typeof window.Kuroshiro !== 'undefined' && typeof window.KuromojiAnalyzer !== 'undefined') {
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 100));
+                }
+
+                const KuroshiroClass = window.Kuroshiro?.default || window.Kuroshiro;
+                const AnalyzerClass = window.KuromojiAnalyzer?.default || window.KuromojiAnalyzer;
+                if (!KuroshiroClass || !AnalyzerClass) {
+                    throw new Error('Kuroshiro globals not available');
+                }
+
+                const instance = new KuroshiroClass();
+                await instance.init(new AnalyzerClass({ dictPath: KUROMOJI_DICT_PATH }));
+                kuroshiroInstance = instance;
+                return instance;
+            } catch (e) {
+                console.warn('[Lyric Miniplayer] Kuroshiro initialization failed, using kana fallback:', e);
+                kuroshiroInitPromise = null;
+                return null;
+            }
+        })();
+
+        return kuroshiroInitPromise;
+    }
+
+    // Built-in Hepburn Kana-to-Romaji table for instant / offline fallback
+    const KANA_DIGRAPHS = {
+        'きゃ': 'kya', 'きゅ': 'kyu', 'きょ': 'kyo',
+        'しゃ': 'sha', 'しゅ': 'shu', 'しょ': 'sho',
+        'ちゃ': 'cha', 'ちゅ': 'chu', 'ちょ': 'cho',
+        'にゃ': 'nya', 'にゅ': 'nyu', 'にょ': 'nyo',
+        'ひゃ': 'hya', 'ひゅ': 'hyu', 'ひょ': 'hyo',
+        'みゃ': 'mya', 'みゅ': 'myu', 'みょ': 'myo',
+        'りゃ': 'rya', 'りゅ': 'ryu', 'りょ': 'ryo',
+        'ぎゃ': 'gya', 'ぎゅ': 'gyu', 'ぎょ': 'gyo',
+        'じゃ': 'ja',  'じゅ': 'ju',  'じょ': 'jo',
+        'ぢゃ': 'ja',  'ぢゅ': 'ju',  'ぢょ': 'jo',
+        'びゃ': 'bya', 'びゅ': 'byu', 'びょ': 'byo',
+        'ぴゃ': 'pya', 'ぴゅ': 'pyu', 'ぴょ': 'pyo',
+        'ふぁ': 'fa',  'ふぃ': 'fi',  'ふぇ': 'fe',  'ふぉ': 'fo',
+        'てぃ': 'ti',  'でぃ': 'di',  'とぅ': 'tu',  'どぅ': 'du',
+        'うぃ': 'wi',  'うぇ': 'we',  'うぉ': 'wo',
+        'ゔぁ': 'va',  'ゔぃ': 'vi',  'ゔぇ': 've',  'ゔぉ': 'vo', 'ゔゅ': 'vyu',
+        'しぇ': 'she', 'ちぇ': 'che', 'じぇ': 'je',
+    };
+
+    const KANA_MONOGRAPHS = {
+        'あ': 'a',  'い': 'i',  'う': 'u',  'え': 'e',  'お': 'o',
+        'か': 'ka', 'き': 'ki', 'く': 'ku', 'け': 'ke', 'こ': 'ko',
+        'さ': 'sa', 'し': 'shi','す': 'su', 'せ': 'se', 'そ': 'so',
+        'た': 'ta', 'ち': 'chi','つ': 'tsu','て': 'te', 'と': 'to',
+        'な': 'na', 'に': 'ni', 'ぬ': 'nu', 'ね': 'ne', 'の': 'no',
+        'は': 'ha', 'ひ': 'hi', 'ふ': 'fu', 'へ': 'he', 'ほ': 'ho',
+        'ま': 'ma', 'み': 'mi', 'む': 'mu', 'め': 'me', 'も': 'mo',
+        'や': 'ya', 'ゆ': 'yu', 'よ': 'yo',
+        'ら': 'ra', 'り': 'ri', 'る': 'ru', 'れ': 're', 'ろ': 'ro',
+        'わ': 'wa', 'ゐ': 'wi', 'ゑ': 'we', 'を': 'o',  'ん': 'n',
+        'が': 'ga', 'ぎ': 'gi', 'ぐ': 'gu', 'げ': 'ge', 'ご': 'go',
+        'ざ': 'za', 'じ': 'ji', 'ず': 'zu', 'ぜ': 'ze', 'ぞ': 'zo',
+        'だ': 'da', 'ぢ': 'ji', 'づ': 'zu', 'で': 'de', 'ど': 'do',
+        'ば': 'ba', 'び': 'bi', 'ぶ': 'bu', 'べ': 'be', 'ぼ': 'bo',
+        'ぱ': 'pa', 'ぴ': 'pi', 'ぷ': 'pu', 'ぺ': 'pe', 'ぽ': 'po',
+        'ゔ': 'vu',
+        'ぁ': 'a',  'ぃ': 'i',  'ぅ': 'u',  'ぇ': 'e',  'ぉ': 'o',
+        'ゃ': 'ya', 'ゅ': 'yu', 'ょ': 'yo', 'ゎ': 'wa',
+    };
+
+    function katakanaToHiragana(str) {
+        return str.replace(/[\u30a1-\u30f6]/g, ch =>
+            String.fromCharCode(ch.charCodeAt(0) - 0x60)
+        );
+    }
+
+    function kanaToRomaji(str) {
+        const hira = katakanaToHiragana(str);
+        let out = '';
+        let i = 0;
+        while (i < hira.length) {
+            const ch = hira[i];
+            if (ch === 'っ') {
+                const nextPair = hira.slice(i + 1, i + 3);
+                const nextRom = KANA_DIGRAPHS[nextPair] || KANA_MONOGRAPHS[hira[i + 1]] || '';
+                if (nextRom && /^[bcdfghjklmnpqrstvwxyz]/.test(nextRom)) {
+                    out += nextRom[0] === 'c' ? 't' : nextRom[0];
+                }
+                i++;
+                continue;
+            }
+            const pair = hira.slice(i, i + 2);
+            if (KANA_DIGRAPHS[pair]) {
+                out += KANA_DIGRAPHS[pair];
+                i += 2;
+                continue;
+            }
+            if (KANA_MONOGRAPHS[ch]) {
+                out += KANA_MONOGRAPHS[ch];
+                i++;
+                continue;
+            }
+            if (ch === 'ー') {
+                const lastVowel = out.match(/[aeiou]$/)?.[0];
+                if (lastVowel) out += lastVowel;
+                i++;
+                continue;
+            }
+            out += str[i];
+            i++;
+        }
+        return out;
+    }
+
+    function cleanRomaji(str) {
+        if (!str) return '';
+        const cleaned = str
+            .replace(/　/g, ' ')
+            .replace(/。/g, '. ')
+            .replace(/、|，/g, ', ')
+            .replace(/！/g, '! ')
+            .replace(/？/g, '? ')
+            .replace(/「|『/g, '"')
+            .replace(/」|』/g, '"')
+            .replace(/（/g, '(')
+            .replace(/）/g, ')')
+            .replace(/〜|～/g, '~')
+            .replace(/・/g, ' ')
+            .replace(/\s+([,.;!?])/g, '$1')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return cleaned.replace(/^([a-z])/, (_, c) => c.toUpperCase());
+    }
+
+    function isJapaneseLyrics(lines) {
+        if (!Array.isArray(lines) || !lines.length) return false;
+        return lines.some(line => KANA_REGEX.test(line.text || ''));
+    }
+
+    async function romanizeLinesForTrack(uri, lines) {
+        if (!lines?.length || !isJapaneseLyrics(lines)) return false;
+
+        if (romanizedCache.has(uri)) {
+            const cached = romanizedCache.get(uri);
+            lines.forEach((line, idx) => {
+                if (cached[idx]) {
+                    line.romaji = cached[idx].romaji;
+                    line.furigana = cached[idx].furigana;
+                }
+            });
+            return true;
+        }
+
+        // First quick pass: convert pure kana immediately while Kuroshiro initializes
+        if (!kuroshiroInstance) {
+            lines.forEach(line => {
+                if (KANA_REGEX.test(line.text)) {
+                    line.romaji = cleanRomaji(kanaToRomaji(line.text));
+                }
+            });
+            if (currentTrackUri === uri) {
+                renderLyricsList();
+            }
+        }
+
+        const kuroshiro = await ensureKuroshiro();
+        if (!kuroshiro) return true;
+
+        const converted = await Promise.all(lines.map(async (line) => {
+            const text = line.text || '';
+            if (!JP_CHAR_REGEX.test(text)) {
+                return { romaji: null, furigana: null };
+            }
+            try {
+                const [rawRomaji, rawFurigana] = await Promise.all([
+                    kuroshiro.convert(text, { to: 'romaji', mode: 'spaced', romajiSystem: 'hepburn' }),
+                    kuroshiro.convert(escapeHtml(text), { to: 'hiragana', mode: 'furigana' }),
+                ]);
+                return {
+                    romaji: cleanRomaji(kanaToRomaji(rawRomaji)),
+                    furigana: rawFurigana,
+                };
+            } catch (e) {
+                return {
+                    romaji: cleanRomaji(kanaToRomaji(text)),
+                    furigana: null,
+                };
+            }
+        }));
+
+        romanizedCache.set(uri, converted);
+        lines.forEach((line, idx) => {
+            if (converted[idx]) {
+                line.romaji = converted[idx].romaji;
+                line.furigana = converted[idx].furigana;
+            }
+        });
+        return true;
     }
 
     // ==================== PIP WINDOW CREATION ====================
@@ -1553,6 +1896,7 @@
             <div class="track-artist" id="trackArtist">-</div>
         </div>
         <div class="header-btns">
+            <button class="romaji-btn ${romanizeJapanese ? 'active' : ''}" id="romajiBtn" title="Toggle Japanese Romanization (Right-click to change style)">あ</button>
             <button class="menu-btn" id="menuBtn" title="Settings">
                 <div class="menu-row">
                     <div class="menu-dot"></div>
@@ -1574,6 +1918,7 @@
     <!-- Floating bar shown on hover in Lyrics Only mode -->
     <div class="float-bar" id="floatBar" title="Drag to move window">
         <div class="float-spacer"></div>
+        <button class="float-btn ${romanizeJapanese ? 'romaji-on' : ''}" id="floatRomajiBtn" title="Toggle Japanese Romanization (Right-click to change style)">あ</button>
         <button class="float-btn" id="floatSettingsBtn" title="Settings">⚙</button>
         <button class="float-btn float-close" id="floatCloseBtn" title="Close">×</button>
     </div>
@@ -1611,6 +1956,20 @@
             <div class="menu-item" id="toggleCenterItem">
                 <span class="menu-item-label">Center Lyrics</span>
                 <div class="menu-toggle ${centerLyrics ? 'on' : ''}" id="toggleCenter"></div>
+            </div>
+            <div class="menu-item" id="toggleRomanizeItem">
+                <div>
+                    <div class="menu-item-label">Romanize Japanese</div>
+                    <div class="menu-item-hint">Convert Japanese lyrics to Romaji</div>
+                </div>
+                <div class="menu-toggle ${romanizeJapanese ? 'on' : ''}" id="toggleRomanize"></div>
+            </div>
+            <div class="menu-item" id="cycleRomanizeModeItem">
+                <div>
+                    <div class="menu-item-label">Romanize Style</div>
+                    <div class="menu-item-hint">Click to cycle display mode</div>
+                </div>
+                <span class="menu-badge" id="romanizeModeBadge">${ROMANIZE_MODES[romanizeMode]}</span>
             </div>
 
             <div class="menu-section-title">🎛️ Controls</div>
@@ -1747,6 +2106,12 @@
         const bottomBar = doc.getElementById('bottomBar');
         const toggleCenterItem = doc.getElementById('toggleCenterItem');
         const toggleCenter = doc.getElementById('toggleCenter');
+        const toggleRomanizeItem = doc.getElementById('toggleRomanizeItem');
+        const toggleRomanize = doc.getElementById('toggleRomanize');
+        const cycleRomanizeModeItem = doc.getElementById('cycleRomanizeModeItem');
+        const romanizeModeBadge = doc.getElementById('romanizeModeBadge');
+        const romajiBtn = doc.getElementById('romajiBtn');
+        const floatRomajiBtn = doc.getElementById('floatRomajiBtn');
         const toggleShuffleItem = doc.getElementById('toggleShuffleItem');
         const toggleShuffle = doc.getElementById('toggleShuffle');
         const toggleRepeatItem = doc.getElementById('toggleRepeatItem');
@@ -1939,6 +2304,63 @@
             localStorage.setItem('lyrics-overlay-centerlyrics', centerLyrics);
         };
 
+        async function setRomanizeJapanese(value) {
+            romanizeJapanese = value;
+            toggleRomanize.classList.toggle('on', romanizeJapanese);
+            romajiBtn.classList.toggle('active', romanizeJapanese);
+            floatRomajiBtn.classList.toggle('romaji-on', romanizeJapanese);
+            localStorage.setItem('lyrics-overlay-romanize', romanizeJapanese);
+
+            if (romanizeJapanese && currentLyrics?.filtered && currentTrackUri) {
+                const uri = currentTrackUri;
+                await romanizeLinesForTrack(uri, currentLyrics.filtered);
+                if (currentTrackUri === uri) {
+                    renderLyricsList();
+                }
+            } else {
+                renderLyricsList();
+            }
+        }
+
+        async function cycleRomanizeMode() {
+            const nextIdx = (ROMANIZE_MODE_KEYS.indexOf(romanizeMode) + 1) % ROMANIZE_MODE_KEYS.length;
+            romanizeMode = ROMANIZE_MODE_KEYS[nextIdx];
+            romanizeModeBadge.textContent = ROMANIZE_MODES[romanizeMode];
+            localStorage.setItem('lyrics-overlay-romanize-mode', romanizeMode);
+
+            if (!romanizeJapanese) {
+                await setRomanizeJapanese(true);
+            } else {
+                renderLyricsList();
+            }
+        }
+
+        toggleRomanizeItem.onclick = () => {
+            setRomanizeJapanese(!romanizeJapanese);
+        };
+
+        cycleRomanizeModeItem.onclick = () => {
+            cycleRomanizeMode();
+        };
+
+        romajiBtn.onclick = () => {
+            setRomanizeJapanese(!romanizeJapanese);
+        };
+
+        romajiBtn.oncontextmenu = (e) => {
+            e.preventDefault();
+            cycleRomanizeMode();
+        };
+
+        floatRomajiBtn.onclick = () => {
+            setRomanizeJapanese(!romanizeJapanese);
+        };
+
+        floatRomajiBtn.oncontextmenu = (e) => {
+            e.preventDefault();
+            cycleRomanizeMode();
+        };
+
         toggleShuffleItem.onclick = () => {
             showShuffleBtn = !showShuffleBtn;
             toggleShuffle.classList.toggle('on', showShuffleBtn);
@@ -2057,8 +2479,9 @@
         // Lyrics click to seek — delayed briefly so a double-click
         // (Lyrics Only toggle) can cancel it instead of seeking twice
         lyricsContainer.onclick = (e) => {
-            if (!e.target.classList.contains('lyric')) return;
-            const time = e.target.dataset.time;
+            const lyricEl = e.target.closest('.lyric');
+            if (!lyricEl) return;
+            const time = lyricEl.dataset.time;
             if (!time) return;
             if (pendingSeekId) win.clearTimeout(pendingSeekId);
             pendingSeekId = win.setTimeout(() => {
@@ -2262,6 +2685,52 @@
         progressDur.textContent = formatTime(duration);
     }
 
+    function formatLyricLineHtml(line) {
+        const origHtml = escapeHtml(line.text);
+        if (!romanizeJapanese || !JP_CHAR_REGEX.test(line.text || '')) {
+            return origHtml;
+        }
+        if (romanizeMode === 'furigana' && line.furigana) {
+            return line.furigana;
+        }
+        if (line.romaji) {
+            const romajiHtml = escapeHtml(line.romaji);
+            if (romanizeMode === 'replace') {
+                return romajiHtml;
+            }
+            // 'below' mode (or fallback if furigana isn't ready yet)
+            if (line.romaji.replace(/\s+/g, '').toLowerCase() !== line.text.replace(/\s+/g, '').toLowerCase()) {
+                return `<div class="lyric-orig">${origHtml}</div><div class="lyric-romaji">${romajiHtml}</div>`;
+            }
+        }
+        return origHtml;
+    }
+
+    function renderLyricsList() {
+        if (!pipWindow || pipWindow.closed || !currentLyrics?.filtered) return;
+
+        const doc = pipWindow.document;
+        const container = doc.getElementById('lyricsContainer');
+        if (!container) return;
+
+        const lyricsHtml = currentLyrics.filtered
+            .map((line, idx) =>
+                `<div class="lyric" data-time="${line.startTime}" data-idx="${idx}" style="font-size:${fontSize}px">${formatLyricLineHtml(line)}</div>`
+            ).join('');
+
+        container.innerHTML = lyricsHtml
+            ? `<div class="lyric-spacer"></div>${lyricsHtml}<div class="lyric-spacer"></div>`
+            : `
+            <div class="status-msg">
+                <div class="icon">🎶</div>
+                <div class="text">Instrumental</div>
+            </div>
+        `;
+
+        lastActiveIdx = -1;
+        updateCurrentLyric();
+    }
+
     async function loadLyrics(uri) {
         if (!pipWindow || pipWindow.closed) return;
 
@@ -2279,7 +2748,9 @@
         container.innerHTML = '<div class="status-msg"><div class="spinner"></div></div>';
 
         // Fetch lyrics
-        currentLyrics = await fetchLyrics(uri);
+        const fetched = await fetchLyrics(uri);
+        if (currentTrackUri !== uri) return;
+        currentLyrics = fetched;
 
         if (!currentLyrics || !currentLyrics.lines?.length) {
             container.innerHTML = `
@@ -2295,20 +2766,28 @@
         // Pre-filter empty lines once so the update loop doesn't have to
         currentLyrics.filtered = currentLyrics.lines.filter(line => line.text && line.text.trim());
 
-        // Render lyrics
-        const lyricsHtml = currentLyrics.filtered
-            .map((line, idx) =>
-                `<div class="lyric" data-time="${line.startTime}" data-idx="${idx}" style="font-size:${fontSize}px">${escapeHtml(line.text)}</div>`
-            ).join('');
+        // Apply cached romanization immediately if available
+        if (romanizedCache.has(uri)) {
+            const cached = romanizedCache.get(uri);
+            currentLyrics.filtered.forEach((line, idx) => {
+                if (cached[idx]) {
+                    line.romaji = cached[idx].romaji;
+                    line.furigana = cached[idx].furigana;
+                }
+            });
+        }
 
-        container.innerHTML = lyricsHtml
-            ? `<div class="lyric-spacer"></div>${lyricsHtml}<div class="lyric-spacer"></div>`
-            : `
-            <div class="status-msg">
-                <div class="icon">🎶</div>
-                <div class="text">Instrumental</div>
-            </div>
-        `;
+        // Render lyrics immediately
+        renderLyricsList();
+
+        // Convert Japanese lyrics in the background (or instantly if Kuroshiro is warm)
+        if (romanizeJapanese && !romanizedCache.has(uri) && isJapaneseLyrics(currentLyrics.filtered)) {
+            const linesRef = currentLyrics.filtered;
+            await romanizeLinesForTrack(uri, linesRef);
+            if (currentTrackUri === uri && currentLyrics?.filtered === linesRef) {
+                renderLyricsList();
+            }
+        }
     }
 
     function updateCurrentLyric() {
@@ -2645,7 +3124,10 @@
     registerHotkey();
     registerProfileMenuItem();
     await createButton();
+    if (romanizeJapanese) {
+        setTimeout(() => ensureKuroshiro(), 1500);
+    }
 
-    console.log('[Lyric Miniplayer] v2 Ready!');
+    console.log('[Lyric Miniplayer] v2 Ready (with Japanese Romanization)!');
 
 })();
