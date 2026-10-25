@@ -1,4 +1,4 @@
-# Lyric Miniplayer (Japanese Romanization Fork)
+# Lyric Miniplayer (CJK Romanization & Fallback Lyrics Fork)
 
 [![GitHub stars](https://img.shields.io/github/stars/rtZenith/Spictify-Lyric-Miniplayer?style=for-the-badge&logo=github&color=1DB954)](https://github.com/rtZenith/Spictify-Lyric-Miniplayer/stargazers)
 [![Upstream](https://img.shields.io/badge/Upstream-FO--SS%2FSpictify--Lyric--Miniplayer-5865F2?style=for-the-badge&logo=github)](https://github.com/FO-SS/Spictify-Lyric-Miniplayer)
@@ -7,17 +7,33 @@ A Spicetify extension that creates a **floating Picture-in-Picture lyrics window
 
 ## 🌸 About This Fork (`rtZenith`)
 
-This repository is a fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.com/FO-SS/Spictify-Lyric-Miniplayer) maintained by [@rtZenith](https://github.com/rtZenith) that adds **automatic Japanese Romanization (Romaji & Furigana)** support directly into the floating miniplayer:
+This repository is an enhanced fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.com/FO-SS/Spictify-Lyric-Miniplayer) maintained by [@rtZenith](https://github.com/rtZenith) adding **multi-source fallback lyrics**, **karaoke progress fill**, **CJK Romanization (Japanese & Korean)**, and enhanced display controls:
 
-- **Full Kanji, Hiragana & Katakana Romanization:** Powered by **Kuroshiro + Kuromoji** morphological analysis with a built-in instant Hepburn Kana fallback.
-- **3 Romanization Display Styles:**
-  - **JP + Romaji (`Below` — default):** Displays the original Japanese line with its Romaji pronunciation underneath.
-  - **Romaji Only (`Replace`):** Replaces Japanese lines completely with Romaji.
-  - **Furigana (`Ruby`):** Displays Kanji with Hiragana readings above them.
-- **One-Click `あ` Quick Toggle:**
-  - **Left-click** the `あ` button in the miniplayer header (or hover bar in Lyrics Only Mode) to toggle Japanese Romanization on/off.
-  - **Right-click** the `あ` button to cycle between `JP + Romaji`, `Romaji Only`, and `Furigana`.
-- **Smart Language Detection & Caching:** Automatically detects Japanese tracks (leaving English/other languages untouched and avoiding duplicate lines on English chorus lines in J-Pop tracks) and caches converted tracks in memory for instant switching.
+- **🎤 Karaoke Progress Wipe Animation & Syllable Sync:**
+  - **Word-by-word timing** for tracks with Spotify syllable-sync timestamps.
+  - **Smooth text sweep animation** for standard line-synced lyrics that dynamically tracks the vocalist's singing pace.
+  - Toggle on/off anytime from Settings.
+- **Multi-Source Fallback Lyrics (Spotify & LRCLIB):**
+  - When Spotify has no lyrics (or only unsynced plain lyrics), the miniplayer automatically queries **LRCLIB** to fetch and parse synchronized LRC lyrics.
+  - Active lyric provider badge (`Spotify` or `LRCLIB`) in the header and Settings.
+- **Selectable Lyrics Provider (Settings):**
+  - Click to cycle between **Auto (Smart)**, **Spotify Only**, or **LRCLIB Only** with instant re-fetching.
+- **Window Dimensions Memory:**
+  - Automatically remembers your custom window width & height, restoring them precisely every time you re-open.
+- **Window Background Opacity Slider:**
+  - Adjust window opacity from **30% to 100%** to glance at lyrics while working or gaming over other apps.
+- **Expanded Font Range & Ctrl + Scroll Zooming:**
+  - Font slider unlocked up to **48px**, and you can hold **Ctrl + Mouse Wheel** directly over the lyrics to dynamically scale the font size.
+- **Japanese Romanization (Romaji & Furigana):**
+  - Full Kanji, Hiragana & Katakana pronunciation powered by **Kuroshiro + Kuromoji** with an instant Hepburn Kana fallback.
+- **Korean Romanization (Hangul → Romaja):**
+  - Built-in lightweight Hangul decomposition engine supporting the **Revised Romanization of Korean** with consonant liaison assimilation.
+- **Unified Smart Romanization Button (`あ`, `한`, `あ/한`, or `Aa`):**
+  - Dynamically updates its icon to match the track's language.
+  - **Left-click** to toggle Romanization on/off.
+  - **Right-click** to cycle between `Original + Romanized`, `Romanized Only`, and `Furigana (JP)`.
+- **In-Memory Caching:** Instant track switching with zero lag once processed.
+- **💡 Multi-Monitor Tip:** Press <kbd>Win</kbd> + <kbd>Shift</kbd> + <kbd>→</kbd> or <kbd>←</kbd> to instantly snap the miniplayer between your monitors!
 
 ![Japanese Romanization Preview](preview.gif)
 
@@ -50,18 +66,23 @@ This repository is a fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.co
 
 ## Features
 
-- **Japanese Romanization (Romaji & Furigana)** — Automatically converts Japanese lyrics (Kanji, Hiragana, Katakana) into Romaji or Furigana with 3 display modes (`JP + Romaji`, `Romaji Only`, `Furigana`) and a quick `あ` toggle button
+- **Karaoke Progress Wipe & Syllable Sync** — Word-by-word timing for syllable-synced songs and smooth text progress fill for line-synced lyrics with instant toggle in Settings
+- **Multi-Source Fallback Lyrics** — Auto-fallback to LRCLIB with live source badges
+- **Selectable Lyric Provider** — Choose Auto, Spotify Only, or LRCLIB Only
+- **Japanese & Korean Romanization** — Kanji/Kana Romaji & Furigana, plus Hangul Revised Romanization (Romaja) with smart `あ`/`한`/`Aa` button
+- **Window Size Memory** — Remembers custom width & height across sessions
+- **Window Opacity Slider** — Adjust background opacity from 30% to 100%
+- **Font Zooming & Expanded Slider** — 10px–48px range plus **Ctrl + Mouse Wheel** zooming over lyrics
 - **Floating Window** — Opens lyrics in a separate always-on-top window
 - **Keyboard Shortcut** — Open/close the miniplayer with **Ctrl + M**, or set your own combo
 - **Synced Lyrics** — Automatically highlights and scrolls to the current line
-- **Lyrics Only Mode** — Distraction-free view with just the lyrics
+- **Lyrics Only Mode** — Distraction-free view with just the lyrics (double-click lyrics to toggle)
 - **Free Scroll & Resume** — Browse ahead or behind, then snap back to the current line
 - **Playback Controls** — Shuffle, Previous, Play/Pause, Next, Repeat buttons
 - **Repeat Button** — Toggle Repeat Off / All / One
 - **Like Button** — Save songs to your Liked Songs directly from the miniplayer
 - **Progress Bar** — Seekable track progress with timestamps
 - **Volume Control** — Adjust volume with slider, click speaker to mute
-- **Adjustable Font Size** — Slider to make lyrics larger or smaller
 - **13 Beautiful Themes** — Dynamic (cover art), Spotify, Pink Pop, Kawaii, Ocean Blue, Racing Red, Sunset, Galaxy, Mint Fresh, Luxury Gold, Cyberpunk, Frost, Rose Gold
 - **Dynamic Theme** — Blurred album art background with an accent color extracted from the artwork, refreshed on every song
 - **Center/Left Align** — Toggle between centered or left-aligned lyrics

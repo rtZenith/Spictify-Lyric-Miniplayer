@@ -9,11 +9,11 @@
 
     // ==================== CONFIG ====================
     const CONFIG = {
-        pipWidth: 280,
-        pipHeight: 360,
+        defaultWidth: 280,
+        defaultHeight: 360,
         updateInterval: 100,
         defaultFontSize: 16,
-        maxFontSize: 28,
+        maxFontSize: 48,
         minFontSize: 10,
     };
 
@@ -182,14 +182,25 @@
     let autoHideControls = true;
     let romanizeJapanese = true;
     let romanizeMode = 'below'; // 'below' | 'replace' | 'furigana'
+    let lyricProvider = 'auto'; // 'auto' | 'spotify' | 'lrclib'
+    let windowOpacity = 100; // 30 to 100
+    let showOpacitySlider = true;
+    let karaokeWipe = true;
     let currentTheme = 'dynamic';
 
     const ROMANIZE_MODES = {
-        below: 'JP + Romaji',
-        replace: 'Romaji Only',
-        furigana: 'Furigana',
+        below: 'Original + Romanized',
+        replace: 'Romanized Only',
+        furigana: 'Furigana (JP)',
     };
     const ROMANIZE_MODE_KEYS = Object.keys(ROMANIZE_MODES);
+
+    const PROVIDER_MODES = {
+        auto: 'Auto (Smart)',
+        spotify: 'Spotify Only',
+        lrclib: 'LRCLIB Only',
+    };
+    const PROVIDER_MODE_KEYS = Object.keys(PROVIDER_MODES);
 
     // Per-window runtime state (reset each time the PiP window opens)
     let manualScroll = false;
@@ -198,6 +209,7 @@
     let lastLiked = null;
     let lastShuffle = null;
     let lastRepeat = null;
+    let trackWindowBounds = null;
 
     // Load saved settings
     try {
@@ -229,6 +241,14 @@
         if (savedRomanizeMode && ROMANIZE_MODES[savedRomanizeMode]) romanizeMode = savedRomanizeMode;
         const savedTheme = localStorage.getItem('lyrics-overlay-theme');
         if (savedTheme && THEMES[savedTheme]) currentTheme = savedTheme;
+        const savedProvider = localStorage.getItem('lyrics-overlay-provider');
+        if (savedProvider && PROVIDER_MODES[savedProvider]) lyricProvider = savedProvider;
+        const savedOpacity = localStorage.getItem('lyrics-overlay-opacity');
+        if (savedOpacity) windowOpacity = Math.min(100, Math.max(30, parseInt(savedOpacity)));
+        const savedShowOpacity = localStorage.getItem('lyrics-overlay-showopacity');
+        if (savedShowOpacity !== null) showOpacitySlider = savedShowOpacity === 'true';
+        const savedKaraoke = localStorage.getItem('lyrics-overlay-karaoke-wipe');
+        if (savedKaraoke !== null) karaokeWipe = savedKaraoke === 'true';
     } catch (e) {}
 
     // ==================== GENERATE CSS WITH THEME ====================
@@ -365,6 +385,13 @@
             margin-bottom: 1px;
         }
 
+        .track-artist-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-width: 0;
+        }
+
         .track-artist {
             font-size: 10px;
             font-weight: 400;
@@ -372,6 +399,31 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            flex-shrink: 1;
+        }
+
+        .source-badge {
+            font-size: 8px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            padding: 1px 4px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.7);
+            flex-shrink: 0;
+            line-height: 1.2;
+            display: none;
+        }
+
+        .source-badge.spotify {
+            background: rgba(30, 215, 96, 0.18);
+            color: #1ed760;
+        }
+
+        .source-badge.lrclib {
+            background: rgba(88, 101, 242, 0.22);
+            color: #8da0ff;
         }
 
         /* Header Buttons */
@@ -617,6 +669,10 @@
             -webkit-app-region: no-drag;
             app-region: no-drag;
             overflow-y: auto;
+        }
+
+        body.panel-open {
+            opacity: 1 !important;
         }
 
         /* Hide the UI behind the settings panel while it is open. The synced
@@ -1060,6 +1116,11 @@
             transform-origin: left center;
         }
 
+        .lyric-content {
+            display: inline-block;
+            max-width: 100%;
+        }
+
         .lyric:hover {
             opacity: 0.55;
         }
@@ -1070,6 +1131,25 @@
             font-weight: 500;
             transform: scale(1.03);
             text-shadow: 0 0 20px var(--text-glow);
+        }
+
+        .lyric.active.karaoke-wipe {
+            text-shadow: none;
+        }
+
+        .lyric.active.karaoke-wipe .lyric-content,
+        .lyric.active.karaoke-wipe .lyric-orig .lyric-content,
+        .lyric.active.karaoke-wipe .lyric-romaji .lyric-content {
+            background-image: linear-gradient(
+                90deg,
+                var(--accent) 0%,
+                var(--accent) var(--karaoke-p, 0%),
+                rgba(255, 255, 255, 0.45) var(--karaoke-p, 0%),
+                rgba(255, 255, 255, 0.45) 100%
+            );
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
         .lyric.past {
@@ -1278,8 +1358,97 @@
     `;
     }
 
+    // ==================== LRC PARSER & FALLBACK PROVIDERS ====================
+    function parseLrc(lrcText) {
+        if (!lrcText) return null;
+        const lines = [];
+        const lrcRegex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/g;
+        let match;
+        while ((match = lrcRegex.exec(lrcText)) !== null) {
+            const min = parseInt(match[1], 10);
+            const sec = parseInt(match[2], 10);
+            const msPart = match[3] || '0';
+            const ms = msPart.length === 2 ? parseInt(msPart, 10) * 10 : parseInt(msPart.padEnd(3, '0').slice(0, 3), 10);
+            const time = min * 60 * 1000 + sec * 1000 + ms;
+            const text = (match[4] || '').trim();
+            lines.push({ startTime: time, text });
+        }
+        if (!lines.length) return null;
+        lines.sort((a, b) => a.startTime - b.startTime);
+        return {
+            synced: true,
+            lines,
+        };
+    }
+
+    async function fetchLrclibLyrics(trackName, artistName, albumName, durationSec) {
+        // 1. Try exact match
+        try {
+            const params = new URLSearchParams();
+            if (trackName) params.append('track_name', trackName);
+            if (artistName) params.append('artist_name', artistName);
+            if (albumName) params.append('album_name', albumName);
+            if (durationSec) params.append('duration', Math.round(durationSec));
+
+            const res = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.syncedLyrics) {
+                    const parsed = parseLrc(data.syncedLyrics);
+                    if (parsed) {
+                        parsed.source = 'LRCLIB';
+                        return parsed;
+                    }
+                }
+                if (data.plainLyrics) {
+                    const lines = data.plainLyrics.split('\n')
+                        .map(line => ({ startTime: 0, text: line.trim() }))
+                        .filter(l => l.text);
+                    if (lines.length) {
+                        return { synced: false, lines, source: 'LRCLIB' };
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[Lyric Miniplayer] LRCLIB get failed:', e);
+        }
+
+        // 2. Try fuzzy search
+        try {
+            const cleanTitle = (trackName || '').replace(/\s*-\s*(Remastered|Bonus Track|Live|Radio Edit).*$/i, '').trim();
+            const query = `${cleanTitle} ${artistName || ''}`.trim();
+            if (query) {
+                const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+                if (res.ok) {
+                    const list = await res.json();
+                    if (Array.isArray(list) && list.length) {
+                        const best = list.find(item => item.syncedLyrics) || list[0];
+                        if (best?.syncedLyrics) {
+                            const parsed = parseLrc(best.syncedLyrics);
+                            if (parsed) {
+                                parsed.source = 'LRCLIB';
+                                return parsed;
+                            }
+                        } else if (best?.plainLyrics) {
+                            const lines = best.plainLyrics.split('\n')
+                                .map(line => ({ startTime: 0, text: line.trim() }))
+                                .filter(l => l.text);
+                            if (lines.length) {
+                                return { synced: false, lines, source: 'LRCLIB' };
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[Lyric Miniplayer] LRCLIB search failed:', e);
+        }
+
+        return null;
+    }
+
     // ==================== LYRICS FETCHING ====================
-    async function fetchLyrics(trackUri) {
+    async function fetchLyrics(trackUri, trackInfo = {}) {
         const trackId = trackUri.split(':').pop();
         const host = 'https://spclient.wg.spotify.com/color-lyrics/v2';
 
@@ -1289,58 +1458,104 @@
             return {
                 // LINE_SYNCED and SYLLABLE_SYNCED both carry line start times
                 synced: !!lyrics.syncType && lyrics.syncType !== 'UNSYNCED',
+                syncType: lyrics.syncType || 'LINE_SYNCED',
+                source: 'Spotify',
                 lines: lyrics.lines.map(line => ({
                     startTime: parseInt(line.startTimeMs) || 0,
+                    syllables: line.syllables && Array.isArray(line.syllables)
+                        ? line.syllables.map(s => ({
+                            startTime: parseInt(s.startTimeMs) || 0,
+                            numChars: parseInt(s.numChars) || 0,
+                        }))
+                        : null,
                     text: line.words || ''
                 }))
             };
         };
 
-        // Method 1: Spotify's own request builder (handles auth + token refresh).
-        // CosmosAsync can no longer reach https URLs on Spotify 1.3+ ("Resolver not found").
-        try {
-            const res = await Spicetify.Platform.RequestBuilder.build()
-                .withHost(host)
-                .withPath(`/track/${encodeURIComponent(trackId)}`)
-                .withQueryParameters({ format: 'json', vocalRemoval: false })
-                .withEndpointIdentifier('/track/{trackId}')
-                .send();
-            const result = parse(res?.body);
-            if (result) return result;
-        } catch (e) {
-            // 404 just means Spotify has no lyrics for this track
-            if (e?.status !== 404 && e?.code !== 404) {
-                console.warn('[Lyric Miniplayer] RequestBuilder lyrics fetch failed:', e);
-            }
-        }
-
-        // Method 2: Plain fetch with the session token
-        try {
-            const token = Spicetify.Platform.AuthorizationAPI.getState().token.accessToken;
-            const res = await fetch(`${host}/track/${trackId}?format=json&vocalRemoval=false&market=from_token`, {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'App-Platform': Spicetify.Platform.PlatformData?.app_platform || 'Win32_x86_64',
-                    'Spotify-App-Version': Spicetify.Platform.version
+        const trySpotify = async () => {
+            let spotifyLyrics = null;
+            try {
+                const res = await Spicetify.Platform.RequestBuilder.build()
+                    .withHost(host)
+                    .withPath(`/track/${encodeURIComponent(trackId)}`)
+                    .withQueryParameters({ format: 'json', vocalRemoval: false })
+                    .withEndpointIdentifier('/track/{trackId}')
+                    .send();
+                spotifyLyrics = parse(res?.body);
+            } catch (e) {
+                if (e?.status !== 404 && e?.code !== 404) {
+                    console.warn('[Lyric Miniplayer] RequestBuilder lyrics fetch failed:', e);
                 }
-            });
-            if (res.ok) {
-                const result = parse(await res.json());
-                if (result) return result;
-            } else if (res.status !== 404) {
-                console.warn('[Lyric Miniplayer] Lyrics fetch failed with status', res.status);
             }
-        } catch (e) {
-            console.warn('[Lyric Miniplayer] Lyrics fetch failed:', e);
+
+            if (!spotifyLyrics) {
+                try {
+                    const token = Spicetify.Platform.AuthorizationAPI.getState().token.accessToken;
+                    const res = await fetch(`${host}/track/${trackId}?format=json&vocalRemoval=false&market=from_token`, {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            'App-Platform': Spicetify.Platform.PlatformData?.app_platform || 'Win32_x86_64',
+                            'Spotify-App-Version': Spicetify.Platform.version
+                        }
+                    });
+                    if (res.ok) {
+                        spotifyLyrics = parse(await res.json());
+                    } else if (res.status !== 404) {
+                        console.warn('[Lyric Miniplayer] Lyrics fetch failed with status', res.status);
+                    }
+                } catch (e) {
+                    console.warn('[Lyric Miniplayer] Lyrics fetch failed:', e);
+                }
+            }
+
+            if (!spotifyLyrics) {
+                try {
+                    spotifyLyrics = parse(await Spicetify.CosmosAsync?.get(
+                        `${host}/track/${trackId}?format=json&market=from_token`
+                    ));
+                } catch (e) {}
+            }
+            return spotifyLyrics;
+        };
+
+        // If forced to Spotify only:
+        if (lyricProvider === 'spotify') {
+            return await trySpotify();
         }
 
-        // Method 3: CosmosAsync, for older Spotify versions
-        try {
-            const result = parse(await Spicetify.CosmosAsync?.get(
-                `${host}/track/${trackId}?format=json&market=from_token`
-            ));
-            if (result) return result;
-        } catch (e) {}
+        // If forced to LRCLIB only:
+        if (lyricProvider === 'lrclib') {
+            return await fetchLrclibLyrics(trackInfo.name, trackInfo.artist, trackInfo.album, trackInfo.duration);
+        }
+
+        // 'auto' mode: Try Spotify first
+        const spotifyLyrics = await trySpotify();
+        if (spotifyLyrics && spotifyLyrics.synced) {
+            return spotifyLyrics;
+        }
+
+        // Fallback to LRCLIB (especially if Spotify is missing lyrics or only has unsynced lyrics)
+        const lrclibLyrics = await fetchLrclibLyrics(
+            trackInfo.name,
+            trackInfo.artist,
+            trackInfo.album,
+            trackInfo.duration
+        );
+
+        if (lrclibLyrics) {
+            // If LRCLIB is synced, prefer it (even over Spotify's unsynced lyrics)
+            if (lrclibLyrics.synced) {
+                return lrclibLyrics;
+            }
+            if (!spotifyLyrics) {
+                return lrclibLyrics;
+            }
+        }
+
+        if (spotifyLyrics) {
+            return spotifyLyrics;
+        }
 
         return null;
     }
@@ -1352,6 +1567,54 @@
 
     const KANA_REGEX = /[\u3040-\u309f\u30a0-\u30ff\uff66-\uff9f\u31f0-\u31ff]/;
     const JP_CHAR_REGEX = /[\u3005\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/;
+    const HANGUL_REGEX = /[\uac00-\ud7a3]/;
+
+    // Korean Revised Romanization tables
+    const KR_CHOSEONG = ['g', 'kk', 'n', 'd', 'tt', 'r', 'm', 'b', 'pp', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'];
+    const KR_JUNGSEONG = ['a', 'ae', 'ya', 'yae', 'eo', 'e', 'yeo', 'ye', 'o', 'wa', 'wae', 'oe', 'yo', 'u', 'wo', 'we', 'wi', 'yu', 'eu', 'ui', 'i'];
+    const KR_JONGSEONG = ['', 'k', 'k', 'k', 'n', 'n', 'n', 't', 'l', 'k', 'm', 'p', 'l', 'l', 'l', 'l', 'm', 'p', 'p', 't', 't', 'ng', 't', 't', 'k', 't', 'p', 't'];
+    const KR_JONG_LIAISON = ['', 'g', 'kk', 'ks', 'n', 'nj', 'nh', 'd', 'r', 'lg', 'lm', 'lb', 'ls', 'lt', 'lp', 'lh', 'm', 'b', 'bs', 's', 'ss', 'ng', 'j', 'ch', 'k', 't', 'p', 'h'];
+
+    function romanizeKorean(str) {
+        if (!str || !HANGUL_REGEX.test(str)) return '';
+        let out = '';
+        let carryOver = '';
+        for (let i = 0; i < str.length; i++) {
+            const code = str.charCodeAt(i);
+            if (code >= 0xAC00 && code <= 0xD7A3) {
+                const idx = code - 0xAC00;
+                const cho = Math.floor(idx / 588);
+                const jung = Math.floor((idx % 588) / 28);
+                const jong = idx % 28;
+
+                let cStr = carryOver ? carryOver : KR_CHOSEONG[cho];
+                carryOver = '';
+                let vStr = KR_JUNGSEONG[jung];
+                let fStr = KR_JONGSEONG[jong];
+
+                // Consonant liaison before null initial ㅇ (e.g. 음악이 -> eumagi)
+                if (jong > 0 && jong !== 21 && i + 1 < str.length) {
+                    const nextCode = str.charCodeAt(i + 1);
+                    if (nextCode >= 0xAC00 && nextCode <= 0xD7A3) {
+                        const nextCho = Math.floor((nextCode - 0xAC00) / 588);
+                        if (nextCho === 11) {
+                            fStr = '';
+                            carryOver = KR_JONG_LIAISON[jong];
+                        }
+                    }
+                }
+                out += cStr + vStr + fStr;
+            } else {
+                if (carryOver) {
+                    out += carryOver;
+                    carryOver = '';
+                }
+                out += str[i];
+            }
+        }
+        if (carryOver) out += carryOver;
+        return cleanRomaji(out);
+    }
 
     let kuroshiroInstance = null;
     let kuroshiroInitPromise = null;
@@ -1539,13 +1802,13 @@
         return cleaned.replace(/^([a-z])/, (_, c) => c.toUpperCase());
     }
 
-    function isJapaneseLyrics(lines) {
+    function hasRomanizableLyrics(lines) {
         if (!Array.isArray(lines) || !lines.length) return false;
-        return lines.some(line => KANA_REGEX.test(line.text || ''));
+        return lines.some(line => KANA_REGEX.test(line.text || '') || HANGUL_REGEX.test(line.text || ''));
     }
 
     async function romanizeLinesForTrack(uri, lines) {
-        if (!lines?.length || !isJapaneseLyrics(lines)) return false;
+        if (!lines?.length || !hasRomanizableLyrics(lines)) return false;
 
         if (romanizedCache.has(uri)) {
             const cached = romanizedCache.get(uri);
@@ -1558,50 +1821,59 @@
             return true;
         }
 
-        // First quick pass: convert pure kana immediately while Kuroshiro initializes
-        if (!kuroshiroInstance) {
+        const isJapanese = lines.some(line => KANA_REGEX.test(line.text || ''));
+        const isKorean = lines.some(line => HANGUL_REGEX.test(line.text || ''));
+
+        // 1. Process Korean lines synchronously & immediately
+        if (isKorean) {
             lines.forEach(line => {
-                if (KANA_REGEX.test(line.text)) {
-                    line.romaji = cleanRomaji(kanaToRomaji(line.text));
+                const text = line.text || '';
+                if (HANGUL_REGEX.test(text)) {
+                    line.romaji = romanizeKorean(text);
                 }
             });
-            if (currentTrackUri === uri) {
+            if (currentTrackUri === uri && !isJapanese) {
                 renderLyricsList();
             }
         }
 
-        const kuroshiro = await ensureKuroshiro();
-        if (!kuroshiro) return true;
+        // 2. Process Japanese lines
+        if (isJapanese) {
+            if (!kuroshiroInstance) {
+                lines.forEach(line => {
+                    if (KANA_REGEX.test(line.text || '') && !line.romaji) {
+                        line.romaji = cleanRomaji(kanaToRomaji(line.text));
+                    }
+                });
+                if (currentTrackUri === uri) {
+                    renderLyricsList();
+                }
+            }
 
-        const converted = await Promise.all(lines.map(async (line) => {
-            const text = line.text || '';
-            if (!JP_CHAR_REGEX.test(text)) {
-                return { romaji: null, furigana: null };
+            const kuroshiro = await ensureKuroshiro();
+            if (kuroshiro) {
+                await Promise.all(lines.map(async (line) => {
+                    const text = line.text || '';
+                    if (!JP_CHAR_REGEX.test(text) || HANGUL_REGEX.test(text)) return;
+                    try {
+                        const [rawRomaji, rawFurigana] = await Promise.all([
+                            kuroshiro.convert(text, { to: 'romaji', mode: 'spaced', romajiSystem: 'hepburn' }),
+                            kuroshiro.convert(escapeHtml(text), { to: 'hiragana', mode: 'furigana' }),
+                        ]);
+                        line.romaji = cleanRomaji(kanaToRomaji(rawRomaji));
+                        line.furigana = rawFurigana;
+                    } catch (e) {
+                        line.romaji = cleanRomaji(kanaToRomaji(text));
+                    }
+                }));
             }
-            try {
-                const [rawRomaji, rawFurigana] = await Promise.all([
-                    kuroshiro.convert(text, { to: 'romaji', mode: 'spaced', romajiSystem: 'hepburn' }),
-                    kuroshiro.convert(escapeHtml(text), { to: 'hiragana', mode: 'furigana' }),
-                ]);
-                return {
-                    romaji: cleanRomaji(kanaToRomaji(rawRomaji)),
-                    furigana: rawFurigana,
-                };
-            } catch (e) {
-                return {
-                    romaji: cleanRomaji(kanaToRomaji(text)),
-                    furigana: null,
-                };
-            }
+        }
+
+        const converted = lines.map(line => ({
+            romaji: line.romaji || null,
+            furigana: line.furigana || null,
         }));
-
         romanizedCache.set(uri, converted);
-        lines.forEach((line, idx) => {
-            if (converted[idx]) {
-                line.romaji = converted[idx].romaji;
-                line.furigana = converted[idx].furigana;
-            }
-        });
         return true;
     }
 
@@ -1617,40 +1889,27 @@
         // Reset track URI to force fresh lyrics load
         currentTrackUri = null;
 
-        // Check for Document Picture-in-Picture API (Chrome 116+)
-        if ('documentPictureInPicture' in window) {
-            try {
-                pipWindow = await window.documentPictureInPicture.requestWindow({
-                    width: CONFIG.pipWidth,
-                    height: CONFIG.pipHeight,
-                });
+        // Load remembered window size
+        const savedW = parseInt(localStorage.getItem('lyrics-overlay-window-width'));
+        const savedH = parseInt(localStorage.getItem('lyrics-overlay-window-height'));
+        const width = savedW && savedW >= 150 ? savedW : CONFIG.defaultWidth;
+        const height = savedH && savedH >= 200 ? savedH : CONFIG.defaultHeight;
 
-                setupPipWindow(pipWindow);
-                return;
-            } catch (err) {
-                console.log('[Lyric Miniplayer] Document PiP failed, trying fallback:', err);
-            }
+        if (!('documentPictureInPicture' in window)) {
+            Spicetify.showNotification('Document Picture-in-Picture is not supported in this Spotify version.', true);
+            return;
         }
 
-        // Fallback: Regular popup window
         try {
-            const left = window.screen.width - CONFIG.pipWidth - 30;
-            const top = 30;
+            pipWindow = await window.documentPictureInPicture.requestWindow({
+                width,
+                height,
+            });
 
-            pipWindow = window.open(
-                'about:blank',
-                'LyricsOverlayPiP',
-                `width=${CONFIG.pipWidth},height=${CONFIG.pipHeight},left=${left},top=${top},resizable=yes,scrollbars=no,toolbar=no,menubar=no,location=no,status=no`
-            );
-
-            if (pipWindow) {
-                setupPipWindow(pipWindow);
-            } else {
-                Spicetify.showNotification('Could not open lyrics window.', true);
-            }
+            setupPipWindow(pipWindow);
         } catch (err) {
-            console.error('[Lyric Miniplayer] Fallback popup failed:', err);
-            Spicetify.showNotification('Could not open lyrics window', true);
+            console.error('[Lyric Miniplayer] Document PiP request failed:', err);
+            Spicetify.showNotification('Could not open lyrics window: ' + (err.message || err), true);
         }
     }
 
@@ -1893,10 +2152,13 @@
         <img class="album-art" id="albumArt" src="" alt="">
         <div class="track-info">
             <div class="track-title" id="trackTitle">Loading...</div>
-            <div class="track-artist" id="trackArtist">-</div>
+            <div class="track-artist-row">
+                <span class="track-artist" id="trackArtist">-</span>
+                <span class="source-badge" id="sourceBadge">Spotify</span>
+            </div>
         </div>
         <div class="header-btns">
-            <button class="romaji-btn ${romanizeJapanese ? 'active' : ''}" id="romajiBtn" title="Toggle Japanese Romanization (Right-click to change style)">あ</button>
+            <button class="romaji-btn ${romanizeJapanese ? 'active' : ''}" id="romajiBtn" title="Toggle Romanization (Japanese / Korean) (Right-click to change style)">Aa</button>
             <button class="menu-btn" id="menuBtn" title="Settings">
                 <div class="menu-row">
                     <div class="menu-dot"></div>
@@ -1918,7 +2180,7 @@
     <!-- Floating bar shown on hover in Lyrics Only mode -->
     <div class="float-bar" id="floatBar" title="Drag to move window">
         <div class="float-spacer"></div>
-        <button class="float-btn ${romanizeJapanese ? 'romaji-on' : ''}" id="floatRomajiBtn" title="Toggle Japanese Romanization (Right-click to change style)">あ</button>
+        <button class="float-btn ${romanizeJapanese ? 'romaji-on' : ''}" id="floatRomajiBtn" title="Toggle Romanization (Japanese / Korean) (Right-click to change style)">Aa</button>
         <button class="float-btn" id="floatSettingsBtn" title="Settings">⚙</button>
         <button class="float-btn float-close" id="floatCloseBtn" title="Close">×</button>
     </div>
@@ -1957,10 +2219,17 @@
                 <span class="menu-item-label">Center Lyrics</span>
                 <div class="menu-toggle ${centerLyrics ? 'on' : ''}" id="toggleCenter"></div>
             </div>
+            <div class="menu-item" id="toggleKaraokeItem">
+                <div>
+                    <div class="menu-item-label">Karaoke Progress Wipe</div>
+                    <div class="menu-item-hint">Smooth text sweep matching lyrics playback</div>
+                </div>
+                <div class="menu-toggle ${karaokeWipe ? 'on' : ''}" id="toggleKaraoke"></div>
+            </div>
             <div class="menu-item" id="toggleRomanizeItem">
                 <div>
-                    <div class="menu-item-label">Romanize Japanese</div>
-                    <div class="menu-item-hint">Convert Japanese lyrics to Romaji</div>
+                    <div class="menu-item-label">Romanize CJK Lyrics</div>
+                    <div class="menu-item-hint">Convert Japanese & Korean lyrics to Romaji/Romaja</div>
                 </div>
                 <div class="menu-toggle ${romanizeJapanese ? 'on' : ''}" id="toggleRomanize"></div>
             </div>
@@ -1970,6 +2239,13 @@
                     <div class="menu-item-hint">Click to cycle display mode</div>
                 </div>
                 <span class="menu-badge" id="romanizeModeBadge">${ROMANIZE_MODES[romanizeMode]}</span>
+            </div>
+            <div class="menu-item" id="cycleProviderItem">
+                <div>
+                    <div class="menu-item-label">Lyrics Provider</div>
+                    <div class="menu-item-hint">Click to change provider source</div>
+                </div>
+                <span class="menu-badge" id="sourceBadgeMenu">${PROVIDER_MODES[lyricProvider]}</span>
             </div>
 
             <div class="menu-section-title">🎛️ Controls</div>
@@ -2007,6 +2283,10 @@
             <div class="menu-item" id="toggleVolItem">
                 <span class="menu-item-label">Volume Slider</span>
                 <div class="menu-toggle ${showVolumeSlider ? 'on' : ''}" id="toggleVol"></div>
+            </div>
+            <div class="menu-item" id="toggleOpacityItem">
+                <span class="menu-item-label">Opacity Slider</span>
+                <div class="menu-toggle ${showOpacitySlider ? 'on' : ''}" id="toggleOpacity"></div>
             </div>
         </div>
     </div>
@@ -2071,11 +2351,42 @@
             <input type="range" class="slider" id="volumeSlider" min="0" max="100" value="${currentVolume}">
             <span class="value-display" id="volumePercent">${currentVolume}%</span>
         </div>
+        <div class="footer-row ${showOpacitySlider ? '' : 'collapsed'}" id="opacityRow">
+            <span class="control-label">Opacity</span>
+            <input type="range" class="slider" id="opacitySlider" min="30" max="100" value="${windowOpacity}">
+            <span class="value-display" id="opacityPercent">${windowOpacity}%</span>
+        </div>
     </div>
     </div>
 </body>
 </html>`);
         doc.close();
+
+        // Apply initial window opacity
+        if (windowOpacity < 100) {
+            doc.body.style.opacity = (windowOpacity / 100).toString();
+        }
+
+        // Auto-save window dimensions
+        function checkAndSaveWindowBounds() {
+            if (!win || win.closed) return;
+            const curW = win.innerWidth;
+            const curH = win.innerHeight;
+
+            if (curW && curH && curW >= 150 && curH >= 200) {
+                localStorage.setItem('lyrics-overlay-window-width', curW);
+                localStorage.setItem('lyrics-overlay-window-height', curH);
+            }
+        }
+
+        trackWindowBounds = checkAndSaveWindowBounds;
+
+        win.addEventListener('resize', checkAndSaveWindowBounds);
+        win.addEventListener('pagehide', () => {
+            checkAndSaveWindowBounds();
+            pipWindow = null;
+        });
+        win.addEventListener('beforeunload', checkAndSaveWindowBounds);
 
         // Get elements
         const menuBtn = doc.getElementById('menuBtn');
@@ -2106,6 +2417,8 @@
         const bottomBar = doc.getElementById('bottomBar');
         const toggleCenterItem = doc.getElementById('toggleCenterItem');
         const toggleCenter = doc.getElementById('toggleCenter');
+        const toggleKaraokeItem = doc.getElementById('toggleKaraokeItem');
+        const toggleKaraoke = doc.getElementById('toggleKaraoke');
         const toggleRomanizeItem = doc.getElementById('toggleRomanizeItem');
         const toggleRomanize = doc.getElementById('toggleRomanize');
         const cycleRomanizeModeItem = doc.getElementById('cycleRomanizeModeItem');
@@ -2126,6 +2439,13 @@
         const toggleFont = doc.getElementById('toggleFont');
         const toggleVolItem = doc.getElementById('toggleVolItem');
         const toggleVol = doc.getElementById('toggleVol');
+        const cycleProviderItem = doc.getElementById('cycleProviderItem');
+        const sourceBadgeMenu = doc.getElementById('sourceBadgeMenu');
+        const toggleOpacityItem = doc.getElementById('toggleOpacityItem');
+        const toggleOpacity = doc.getElementById('toggleOpacity');
+        const opacityRow = doc.getElementById('opacityRow');
+        const opacitySlider = doc.getElementById('opacitySlider');
+        const opacityPercent = doc.getElementById('opacityPercent');
         const themeStyles = doc.getElementById('themeStyles');
         const openThemePickerBtn = doc.getElementById('openThemePicker');
         const currentThemeEmoji = doc.getElementById('currentThemeEmoji');
@@ -2170,6 +2490,7 @@
                     el.removeEventListener('pointermove', onMove);
                     el.removeEventListener('pointerup', onUp);
                     el.removeEventListener('pointercancel', onUp);
+                    checkAndSaveWindowBounds();
                 };
                 el.addEventListener('pointermove', onMove);
                 el.addEventListener('pointerup', onUp);
@@ -2304,6 +2625,19 @@
             localStorage.setItem('lyrics-overlay-centerlyrics', centerLyrics);
         };
 
+        if (toggleKaraokeItem && toggleKaraoke) {
+            toggleKaraokeItem.onclick = () => {
+                karaokeWipe = !karaokeWipe;
+                toggleKaraoke.classList.toggle('on', karaokeWipe);
+                localStorage.setItem('lyrics-overlay-karaoke-wipe', karaokeWipe);
+                const activeEl = doc.querySelector('.lyric.active');
+                if (activeEl) {
+                    activeEl.classList.toggle('karaoke-wipe', karaokeWipe);
+                    if (!karaokeWipe) activeEl.style.removeProperty('--karaoke-p');
+                }
+            };
+        }
+
         async function setRomanizeJapanese(value) {
             romanizeJapanese = value;
             toggleRomanize.classList.toggle('on', romanizeJapanese);
@@ -2413,6 +2747,38 @@
             updateBottomHeight();
         };
 
+        if (cycleProviderItem) {
+            cycleProviderItem.onclick = async () => {
+                const nextIdx = (PROVIDER_MODE_KEYS.indexOf(lyricProvider) + 1) % PROVIDER_MODE_KEYS.length;
+                lyricProvider = PROVIDER_MODE_KEYS[nextIdx];
+                localStorage.setItem('lyrics-overlay-provider', lyricProvider);
+                if (sourceBadgeMenu) sourceBadgeMenu.textContent = PROVIDER_MODES[lyricProvider];
+                Spicetify.showNotification(`Lyrics Provider: ${PROVIDER_MODES[lyricProvider]}`);
+                if (currentTrackUri) {
+                    await loadLyrics(currentTrackUri);
+                }
+            };
+        }
+
+        if (toggleOpacityItem) {
+            toggleOpacityItem.onclick = () => {
+                showOpacitySlider = !showOpacitySlider;
+                toggleOpacity.classList.toggle('on', showOpacitySlider);
+                opacityRow.classList.toggle('collapsed', !showOpacitySlider);
+                localStorage.setItem('lyrics-overlay-showopacity', showOpacitySlider);
+                updateBottomHeight();
+            };
+        }
+
+        if (opacitySlider) {
+            opacitySlider.oninput = (e) => {
+                windowOpacity = parseInt(e.target.value);
+                opacityPercent.textContent = `${windowOpacity}%`;
+                doc.body.style.opacity = (windowOpacity / 100).toString();
+                localStorage.setItem('lyrics-overlay-opacity', windowOpacity);
+            };
+        }
+
         // Control handlers
         prevBtn.onclick = () => Spicetify.Player.back();
         playBtn.onclick = () => Spicetify.Player.togglePlay();
@@ -2497,7 +2863,21 @@
             resumePill.classList.add('visible');
         }
 
-        lyricsContainer.addEventListener('wheel', onUserScroll, { passive: true });
+        // Ctrl + Mouse Wheel font zooming directly over lyrics
+        lyricsContainer.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 1 : -1;
+                fontSize = Math.min(CONFIG.maxFontSize, Math.max(CONFIG.minFontSize, fontSize + delta));
+                if (fontSlider) fontSlider.value = fontSize;
+                if (fontValue) fontValue.textContent = `${fontSize}px`;
+                localStorage.setItem('lyrics-overlay-fontsize', fontSize);
+                updatePipFontSize();
+                return;
+            }
+            onUserScroll();
+        }, { passive: false });
+
         lyricsContainer.addEventListener('touchmove', onUserScroll, { passive: true });
 
         // Resume auto-tracking
@@ -2574,6 +2954,9 @@
 
         // Update volume
         updatePipVolume();
+
+        // Update source badge
+        updateSourceBadge(currentLyrics?.source);
 
         // Check if track changed
         if (track.uri !== currentTrackUri) {
@@ -2687,23 +3070,88 @@
 
     function formatLyricLineHtml(line) {
         const origHtml = escapeHtml(line.text);
-        if (!romanizeJapanese || !JP_CHAR_REGEX.test(line.text || '')) {
-            return origHtml;
+        if (!romanizeJapanese) return `<span class="lyric-content">${origHtml}</span>`;
+
+        const hasJp = JP_CHAR_REGEX.test(line.text || '');
+        const hasKr = HANGUL_REGEX.test(line.text || '');
+
+        if (!hasJp && !hasKr) {
+            return `<span class="lyric-content">${origHtml}</span>`;
         }
-        if (romanizeMode === 'furigana' && line.furigana) {
-            return line.furigana;
+
+        if (hasJp && romanizeMode === 'furigana' && line.furigana) {
+            return `<span class="lyric-content">${line.furigana}</span>`;
         }
+
         if (line.romaji) {
             const romajiHtml = escapeHtml(line.romaji);
             if (romanizeMode === 'replace') {
-                return romajiHtml;
+                return `<span class="lyric-content">${romajiHtml}</span>`;
             }
-            // 'below' mode (or fallback if furigana isn't ready yet)
+            // 'below' mode
             if (line.romaji.replace(/\s+/g, '').toLowerCase() !== line.text.replace(/\s+/g, '').toLowerCase()) {
-                return `<div class="lyric-orig">${origHtml}</div><div class="lyric-romaji">${romajiHtml}</div>`;
+                return `<div class="lyric-orig"><span class="lyric-content">${origHtml}</span></div><div class="lyric-romaji"><span class="lyric-content">${romajiHtml}</span></div>`;
             }
         }
-        return origHtml;
+        return `<span class="lyric-content">${origHtml}</span>`;
+    }
+
+    function updateSourceBadge(source) {
+        if (!pipWindow || pipWindow.closed) return;
+        const doc = pipWindow.document;
+        const badge = doc.getElementById('sourceBadge');
+        const badgeMenu = doc.getElementById('sourceBadgeMenu');
+        const s = source || 'None';
+
+        if (badge) {
+            if (!source || source === 'None') {
+                badge.style.display = 'none';
+            } else {
+                badge.style.display = 'inline-block';
+                badge.textContent = source;
+                badge.className = `source-badge ${source.toLowerCase()}`;
+                badge.title = `Lyrics source: ${source}`;
+            }
+        }
+        if (badgeMenu) {
+            badgeMenu.textContent = s;
+        }
+    }
+
+    function updateRomanizeButtonLabel(lines) {
+        if (!pipWindow || pipWindow.closed) return;
+        const doc = pipWindow.document;
+        const romajiBtn = doc.getElementById('romajiBtn');
+        const floatRomajiBtn = doc.getElementById('floatRomajiBtn');
+        if (!romajiBtn && !floatRomajiBtn) return;
+
+        let label = 'Aa';
+        let title = 'Toggle Romanization';
+        const hasJp = lines && lines.some(l => KANA_REGEX.test(l.text || ''));
+        const hasKr = lines && lines.some(l => HANGUL_REGEX.test(l.text || ''));
+
+        if (hasJp && hasKr) {
+            label = 'あ/한';
+            title = 'Toggle Romanization (Japanese & Korean)';
+        } else if (hasJp) {
+            label = 'あ';
+            title = 'Toggle Romanization (Japanese Romaji/Furigana)';
+        } else if (hasKr) {
+            label = '한';
+            title = 'Toggle Romanization (Korean Romaja)';
+        } else {
+            label = 'Aa';
+            title = 'Toggle Romanization';
+        }
+
+        if (romajiBtn) {
+            romajiBtn.textContent = label;
+            romajiBtn.title = `${title} (Right-click to change style)`;
+        }
+        if (floatRomajiBtn) {
+            floatRomajiBtn.textContent = label;
+            floatRomajiBtn.title = `${title} (Right-click to change style)`;
+        }
     }
 
     function renderLyricsList() {
@@ -2746,9 +3194,18 @@
 
         // Show loading
         container.innerHTML = '<div class="status-msg"><div class="spinner"></div></div>';
+        updateSourceBadge(null);
 
-        // Fetch lyrics
-        const fetched = await fetchLyrics(uri);
+        // Fetch lyrics with track metadata for LRCLIB fallback
+        const track = Spicetify.Player.data?.item;
+        const trackInfo = {
+            name: track?.name || '',
+            artist: track?.artists?.[0]?.name || track?.artists?.map(a => a.name).join(', ') || '',
+            album: track?.album?.name || '',
+            duration: (track?.duration?.milliseconds || Spicetify.Player.getDuration() || 0) / 1000,
+        };
+
+        const fetched = await fetchLyrics(uri, trackInfo);
         if (currentTrackUri !== uri) return;
         currentLyrics = fetched;
 
@@ -2757,14 +3214,22 @@
                 <div class="status-msg">
                     <div class="icon">🎵</div>
                     <div class="text">No lyrics available</div>
-                    <div class="subtext">Lyrics not found for this track</div>
+                    <div class="subtext">Lyrics not found on Spotify or LRCLIB</div>
                 </div>
             `;
+            updateSourceBadge(null);
+            updateRomanizeButtonLabel([]);
             return;
         }
 
+        // Update lyric source badge
+        updateSourceBadge(currentLyrics.source);
+
         // Pre-filter empty lines once so the update loop doesn't have to
         currentLyrics.filtered = currentLyrics.lines.filter(line => line.text && line.text.trim());
+
+        // Update romanization button label (あ / 한 / あ/한 / Aa)
+        updateRomanizeButtonLabel(currentLyrics.filtered);
 
         // Apply cached romanization immediately if available
         if (romanizedCache.has(uri)) {
@@ -2780,14 +3245,55 @@
         // Render lyrics immediately
         renderLyricsList();
 
-        // Convert Japanese lyrics in the background (or instantly if Kuroshiro is warm)
-        if (romanizeJapanese && !romanizedCache.has(uri) && isJapaneseLyrics(currentLyrics.filtered)) {
+        // Convert Japanese/Korean lyrics in the background (or instantly for Korean/warm cache)
+        if (romanizeJapanese && !romanizedCache.has(uri) && hasRomanizableLyrics(currentLyrics.filtered)) {
             const linesRef = currentLyrics.filtered;
             await romanizeLinesForTrack(uri, linesRef);
             if (currentTrackUri === uri && currentLyrics?.filtered === linesRef) {
                 renderLyricsList();
             }
         }
+    }
+
+    function calculateLineProgress(line, currentTime, nextStartTime) {
+        if (!line) return 0;
+        const lineStart = line.startTime;
+        if (currentTime < lineStart) return 0;
+
+        // If track provides syllable timestamps (Spotify syllable sync)
+        if (line.syllables && line.syllables.length > 0) {
+            const syllables = line.syllables;
+            const textLen = (line.text || '').length || 1;
+            let currentChars = 0;
+
+            for (let i = 0; i < syllables.length; i++) {
+                const s = syllables[i];
+                const sStart = s.startTime;
+                const nextS = syllables[i + 1];
+                const sEnd = nextS ? nextS.startTime : (nextStartTime || (sStart + 800));
+                const sChars = s.numChars || Math.max(1, Math.floor(textLen / syllables.length));
+
+                if (currentTime >= sEnd) {
+                    currentChars += sChars;
+                } else if (currentTime >= sStart) {
+                    const dur = Math.max(1, sEnd - sStart);
+                    const sProg = (currentTime - sStart) / dur;
+                    currentChars += sChars * Math.min(1, Math.max(0, sProg));
+                    break;
+                } else {
+                    break;
+                }
+            }
+            return Math.max(0, Math.min(100, (currentChars / textLen) * 100));
+        }
+
+        // Line-synced smooth sweep: fills smoothly across the line until next line
+        const gap = (nextStartTime && nextStartTime > lineStart)
+            ? (nextStartTime - lineStart)
+            : 4000;
+        const vocalDuration = Math.min(Math.max(gap * 0.92, 1200), 7500);
+        const elapsed = currentTime - lineStart;
+        return Math.max(0, Math.min(100, (elapsed / vocalDuration) * 100));
     }
 
     function updateCurrentLyric() {
@@ -2806,26 +3312,40 @@
             }
         }
 
-        // Only touch the DOM when the active line actually changes
-        if (activeIdx === lastActiveIdx) return;
-        lastActiveIdx = activeIdx;
-
-        const lyrics = doc.querySelectorAll('.lyric');
         const isPlaying = Spicetify.Player.isPlaying();
 
-        lyrics.forEach((el, idx) => {
-            el.classList.remove('active', 'past');
+        // Update DOM classes when active line changes
+        if (activeIdx !== lastActiveIdx) {
+            lastActiveIdx = activeIdx;
 
-            if (idx === activeIdx) {
-                el.classList.add('active');
-                // Auto-scroll only while playing and not in manual scroll mode
-                if (isPlaying && !manualScroll) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const lyrics = doc.querySelectorAll('.lyric');
+            lyrics.forEach((el, idx) => {
+                el.classList.remove('active', 'past', 'karaoke-wipe');
+
+                if (idx === activeIdx) {
+                    el.classList.add('active');
+                    if (karaokeWipe) el.classList.add('karaoke-wipe');
+                    // Auto-scroll only while playing and not in manual scroll mode
+                    if (isPlaying && !manualScroll) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                } else if (idx < activeIdx) {
+                    el.classList.add('past');
                 }
-            } else if (idx < activeIdx) {
-                el.classList.add('past');
+            });
+        }
+
+        // Live Karaoke progress fill
+        if (karaokeWipe && activeIdx >= 0 && activeIdx < filteredLines.length) {
+            const activeEl = doc.querySelector(`.lyric[data-idx="${activeIdx}"]`);
+            if (activeEl) {
+                const line = filteredLines[activeIdx];
+                const nextLine = filteredLines[activeIdx + 1];
+                const nextStart = nextLine ? nextLine.startTime : null;
+                const p = calculateLineProgress(line, currentTime, nextStart);
+                activeEl.style.setProperty('--karaoke-p', `${p.toFixed(1)}%`);
             }
-        });
+        }
     }
 
     function updatePipFontSize() {
@@ -2847,6 +3367,7 @@
                 return;
             }
 
+            if (trackWindowBounds) trackWindowBounds();
             updateCurrentLyric();
             updatePipPlayButton();
             updatePipLikeState();

@@ -1,7 +1,7 @@
 [
   {
     "name": "Lyric Miniplayer",
-    "description": "A floating Picture-in-Picture lyrics window that stays on top of other apps. Includes Japanese Romanization (Romaji / Furigana), Lyrics Only mode, Dynamic cover-art theme, free scroll with resume sync, repeat button, seekable progress bar, synced lyrics, 13 themes, and playback controls.",
+    "description": "A floating Picture-in-Picture lyrics window that stays on top of other apps. Includes syllable karaoke wipe animation, customizable lyric providers (Auto/Spotify/LRCLIB), window size memory, background opacity slider, Ctrl+Scroll font zooming, Japanese & Korean Romanization (Romaji / Furigana / Romaja), Lyrics Only mode, Dynamic theme, and playback controls.",
     "preview": "preview.png",
     "main": "lyrics-overlay.js",
     "readme": "README.md",
@@ -9,6 +9,6 @@
       { "name": "FO-SS", "url": "https://github.com/FO-SS" },
       { "name": "rtZenith", "url": "https://github.com/rtZenith" }
     ],
-    "tags": ["lyrics", "miniplayer", "pip", "floating", "karaoke", "themes", "romaji", "japanese"]
+    "tags": ["lyrics", "miniplayer", "pip", "floating", "karaoke", "themes", "romaji", "japanese", "korean", "hangul", "lrclib", "opacity"]
   }
 ]
