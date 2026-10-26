@@ -1,6 +1,6 @@
-# Lyric Miniplayer (CJK Romanization & Fallback Lyrics Fork)
+# Lyric Miniplayer Enhanced (Syllable Karaoke, LRCLIB & CJK Romanization)
 
-[![GitHub stars](https://img.shields.io/github/stars/rtZenith/Spictify-Lyric-Miniplayer?style=for-the-badge&logo=github&color=1DB954)](https://github.com/rtZenith/Spictify-Lyric-Miniplayer/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/rtZenith/spicetify-lyrics-miniplayer-enhanced?style=for-the-badge&logo=github&color=1DB954)](https://github.com/rtZenith/spicetify-lyrics-miniplayer-enhanced/stargazers)
 [![Upstream](https://img.shields.io/badge/Upstream-FO--SS%2FSpictify--Lyric--Miniplayer-5865F2?style=for-the-badge&logo=github)](https://github.com/FO-SS/Spictify-Lyric-Miniplayer)
 
 A Spicetify extension that creates a **floating Picture-in-Picture lyrics window** that stays on top of other applications — like YouTube's mini-player, but for lyrics!
