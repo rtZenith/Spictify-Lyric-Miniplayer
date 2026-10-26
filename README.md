@@ -5,9 +5,9 @@
 
 A Spicetify extension that creates a **floating Picture-in-Picture lyrics window** that stays on top of other applications — like YouTube's mini-player, but for lyrics!
 
-## 🌸 About This Fork (`rtZenith`)
+## 🌸 Features Overview
 
-This repository is an enhanced fork of [FO-SS/Spictify-Lyric-Miniplayer](https://github.com/FO-SS/Spictify-Lyric-Miniplayer) maintained by [@rtZenith](https://github.com/rtZenith) adding **multi-source fallback lyrics**, **karaoke progress fill**, **CJK Romanization (Japanese & Korean)**, and enhanced display controls:
+**Lyric Miniplayer Enhanced** is a feature-packed edition (forked from [FO-SS/Spictify-Lyric-Miniplayer](https://github.com/FO-SS/Spictify-Lyric-Miniplayer)) maintained by [@rtZenith](https://github.com/rtZenith) adding **karaoke syllable wipe**, **LRCLIB fallback lyrics**, **Korean & Japanese Romanization**, and enhanced display controls:
 
 - **🎤 Karaoke Progress Wipe Animation & Syllable Sync:**
   - **Word-by-word timing** for tracks with Spotify syllable-sync timestamps.
@@ -96,7 +96,7 @@ This repository is an enhanced fork of [FO-SS/Spictify-Lyric-Miniplayer](https:/
 
 1. Open Spotify
 2. Go to the Marketplace
-3. Search for "Lyric Miniplayer"
+3. Search for "Lyric Miniplayer (Enhanced)"
 4. Click Install
 
 ### Manual Installation
@@ -249,5 +249,7 @@ MIT License — Feel free to modify and share!
 ## Credits
 
 - Built for [Spicetify](https://spicetify.app/)
-- Uses Spotify's lyrics API
+- Original extension by [FO-SS](https://github.com/FO-SS/Spictify-Lyric-Miniplayer)
+- Fallback lyrics powered by [LRCLIB](https://lrclib.net/)
+- Japanese Romanization by [Kuroshiro](https://github.com/hexenq/kuroshiro) & [Kuromoji](https://github.com/takuyaa/kuromoji.js)
 - Font: [DM Sans](https://fonts.google.com/specimen/DM+Sans)
