@@ -1,6 +1,6 @@
 [
   {
-    "name": "Lyric Miniplayer",
+    "name": "Lyric Miniplayer (Enhanced)",
     "description": "A floating Picture-in-Picture lyrics window that stays on top of other apps. Includes syllable karaoke wipe animation, customizable lyric providers (Auto/Spotify/LRCLIB), window size memory, background opacity slider, Ctrl+Scroll font zooming, Japanese & Korean Romanization (Romaji / Furigana / Romaja), Lyrics Only mode, Dynamic theme, and playback controls.",
     "preview": "preview.png",
     "main": "lyrics-overlay.js",
